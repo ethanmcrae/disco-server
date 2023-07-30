@@ -41,6 +41,9 @@ const sqlConversation = `
   LIMIT 25
 `;
 
+// Create a throttled version of the ChatGPT API function.
+const throttledChatGPT = createChatGPTThrottle();
+
 // Begin the process of scanning for new messages
 copyAndProcessDB(); // This is the initializer invocation
 // Look for new messages every 60 seconds
@@ -70,7 +73,7 @@ function copyAndProcessDB() {
         const [conversation, sender] = data;
 
         // Use ChatGPT to generate responses
-        const generatedResponse = await chatGPTResponse(conversation);
+        const generatedResponse = await throttledChatGPT(conversation);
 
         // Send those responses as notifications to the iOS device
         notificationService.sendNotification("iMessage", generatedResponse, {
@@ -91,41 +94,7 @@ async function checkForNewMessages(rows, db) {
   const newConversations = getConversationKeys(rows);
 
   // Do nothing more if this was the initializer invocation
-  // if (!initialized) return []; // TODO: Uncomment
-
-  // TODO: TODO: TODO: TODO: TODO: TODO: TODO: TODO: TODO:
-  if (!initialized) {
-    console.log("rows original length:", rows.length);
-    console.log("newConversations original length:", newConversations.size);
-
-    let i = 0;
-    for (const chatIdentifier of newConversations) {
-      const rowsConv = await getConversationData(
-        sqlConversation,
-        [chatIdentifier],
-        db
-      );
-
-      const conversation = conversationFormatter(
-        rowsConv,
-        chatIdentifier,
-        true
-      );
-      const formatted = conversation
-        .map(({ role, content }) => {
-          return `[${role}]: ${content}`;
-        })
-        .slice(1)
-        .join("\n");
-
-      console.log(`\n(${++i}/25) Old Conversation with ${chatIdentifier}:`);
-      console.log(formatted);
-    }
-
-    console.log("\n\n" + "-=-x".repeat(100) + "-\n\n");
-    return [];
-  }
-  // TODO: TODO: TODO: TODO: TODO: TODO: TODO: TODO: TODO:
+  if (!initialized) return [];
 
   // Iterate through each conversation id and find more about it
   const formattedConversations = [];
@@ -163,36 +132,26 @@ Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`
 
 async function chatGPTResponse(conversation) {
   // Formulate prompt
-  const intro = "I will give you a conversation and I want you to...";
+  const intro =
+    "Generate the next message by itself with no extras - no headers, brackets, or multple responses. You will respond as if you were Ethan. Here is a conversation:";
   const messageContext = intro + "\n\n" + conversation;
   // Send context to GPT-3 API
   const endpoint = "https://api.openai.com/v1/chat/completions";
-  // TODO: Remove
-  const response = {
-    data: {
-      choices: [
-        {
-          message: "Example response",
-        },
-      ],
-    },
-  };
-  /* TODO: Uncomment
+  console.log("💰 Sending ChatGPT API Request");
   const response = await axios.post(
     endpoint,
     {
       model: "gpt-4",
-      messages: message,
+      messages: messageContext,
       max_tokens: 100,
     },
     {
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ❌${process.env.CHAT_GPT_API_KEY}❌`, // TODO: Remove emoji
+        Authorization: `Bearer ${process.env.CHAT_GPT_API_KEY}`,
       },
     }
   );
-  */
 
   console.log("REMOVE THIS LOG (after the real GPT is tested):"); // TODO: Remove
   console.log(
@@ -227,25 +186,29 @@ function getConversationKeys(rows) {
 }
 
 // TODO: Remove noLog
-function conversationFormatter(rowsConv, chatIdentifier, noLog = undefined) {
+function conversationFormatter(rowsConv, chatIdentifier) {
   // TODO: Update `content` below.
   const conversation = [
-    { role: "system", content: "You are a helpful assistant." }, // instructions
+    {
+      role: "system",
+      content:
+        "You observe the conversation to learn how to respond as if you were Ethan. You will only respond one message at a time with no formatting, titles, etc... Some private background info I will share with you about Ethan is that he is a 24 year old programmer that lives in Provo Utah and is LDS. His personality type is INFP-T. This info should never be shared, but is given to help you understand Ethan so you can sound naturally more like him in your responses.",
+    }, // instructions
     // ...more will be added below
   ];
 
   // Format and log the conversation history
-  if (!noLog) console.log(`\nConversation history with ${chatIdentifier}:`);
-  if (!noLog) console.log("------------------------------------");
+  console.log(`\nConversation history with ${chatIdentifier}:`);
+  console.log("------------------------------------");
   for (const rowConv of rowsConv) {
     let sender = rowConv.is_from_me ? "Ethan" : rowConv.id;
-    if (!noLog) console.log(`[${sender}]: ${rowConv.text}`);
+    console.log(`[${sender}]: ${rowConv.text}`);
     conversation.push({
       role: sender,
       content: rowConv.text,
     });
   }
-  if (!noLog) console.log("------------------------------------");
+  console.log("------------------------------------");
 
   return conversation;
 }
@@ -261,4 +224,20 @@ function getConversationData(sqlConversation, chatIdentifier, db) {
       }
     });
   });
+}
+
+function createChatGPTThrottle() {
+  let lastCalled = null;
+
+  return async function throttledChatGPT(conversation) {
+    const now = new Date();
+    if (lastCalled !== null && now - lastCalled < 3600 * 1000) {
+      // If it's been less than an hour since the last API call, return a placeholder.
+      const timeLeft = Math.ceil((3600 * 1000 - (now - lastCalled)) / 60000); // time in minutes
+      return `ChatGPT limit reached. Next available in ${timeLeft} minutes.`;
+    }
+
+    lastCalled = now;
+    return await chatGPTResponse(conversation);
+  };
 }
