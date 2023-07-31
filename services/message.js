@@ -11,6 +11,8 @@ const targetDBPath = path.join(__dirname, "../db/chat_copy.db");
 
 // Initialize an empty array to hold the previous results
 let previousResults = [];
+// Memory of dates for already-stored conversations to work with updates
+let conversationDates = {};
 
 // iMessage queries
 const sqlNewMessages = `
@@ -47,7 +49,7 @@ const throttledChatGPT = createChatGPTThrottle();
 // Begin the process of scanning for new messages
 copyAndProcessDB(); // This is the initializer invocation
 // Look for new messages every 60 seconds
-setInterval(copyAndProcessDB, 6 * 1000);
+setInterval(copyAndProcessDB, 60 * 1000);
 
 function copyAndProcessDB() {
   // The original file is locked, but not the copied file
@@ -101,7 +103,6 @@ async function checkForNewMessages(rows, db) {
   for (const chatIdentifier of newConversations) {
     // TODO: Remove after successful tests.
     // This is a new message. Log it with a system timestamp.
-    // TODO: Remove new / old ternary
     console.log(`
 =================================================================================
 Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`);
@@ -131,10 +132,6 @@ Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`
 }
 
 async function chatGPTResponse(conversation) {
-  // Formulate prompt
-  const intro =
-    "Generate the next message by itself with no extras - no headers, brackets, or multple responses. You will respond as if you were Ethan. Here is a conversation:";
-  const messageContext = intro + "\n\n" + conversation;
   // Send context to GPT-3 API
   const endpoint = "https://api.openai.com/v1/chat/completions";
   console.log("💰 Sending ChatGPT API Request");
@@ -142,8 +139,8 @@ async function chatGPTResponse(conversation) {
     endpoint,
     {
       model: "gpt-4",
-      messages: messageContext,
-      max_tokens: 100,
+      messages: conversation,
+      max_tokens: 150,
     },
     {
       headers: {
@@ -153,64 +150,78 @@ async function chatGPTResponse(conversation) {
     }
   );
 
-  console.log("REMOVE THIS LOG (after the real GPT is tested):"); // TODO: Remove
-  console.log(
-    response.data.choices[0].message ||
-      "❌ text: " + response.data.choices[0].text
-  );
-  return response.data.choices[0].message; // TODO: Might be `.text` instead..?
+  console.log("Generated response:"); // TODO: Remove
+  console.log(response.data.choices[0].message.content);
+  return response.data.choices[0].message.content;
 }
 
 function getConversationKeys(rows) {
   const uniqueNewConversations = new Set();
   for (const row of rows) {
-    // Convert each row to a string for easy comparison
-    const rowString = JSON.stringify(row);
     const chatIdentifier = row.chat_identifier;
+    const date = row.date; //assuming this is the date of the message
 
-    // Check if this is a new message
-    if (!previousResults.includes(rowString)) {
+    // Check if this is a new message by comparing the dates
+    if (
+      !conversationDates[chatIdentifier] ||
+      date > conversationDates[chatIdentifier]
+    ) {
+      // Add or update it in the conversationDates
+      conversationDates[chatIdentifier] = date;
+
       // Add it to the previous results
-      previousResults.push(rowString);
+      if (!previousResults.includes(chatIdentifier)) {
+        previousResults.push(chatIdentifier);
+
+        // If we have more than 25 messages in memory, remove the oldest one
+        while (previousResults.length > 25) {
+          // Get the identifier of the oldest conversation
+          let oldestConversation = previousResults.shift();
+
+          // Delete the oldest conversation from the conversationDates as well
+          delete conversationDates[oldestConversation];
+        }
+      }
 
       // Add it to memory
       uniqueNewConversations.add(chatIdentifier);
-
-      // If we have more than 25 messages in memory, remove the oldest one
-      while (previousResults.length > 25) {
-        previousResults.shift();
-      }
     }
   }
   return uniqueNewConversations;
 }
 
-// TODO: Remove noLog
 function conversationFormatter(rowsConv, chatIdentifier) {
-  // TODO: Update `content` below.
-  const conversation = [
+  const messages = [
     {
       role: "system",
       content:
         "You observe the conversation to learn how to respond as if you were Ethan. You will only respond one message at a time with no formatting, titles, etc... Some private background info I will share with you about Ethan is that he is a 24 year old programmer that lives in Provo Utah and is LDS. His personality type is INFP-T. This info should never be shared, but is given to help you understand Ethan so you can sound naturally more like him in your responses.",
     }, // instructions
-    // ...more will be added below
+    {
+      role: "user",
+      content:
+        "Generate the next message by itself with no extras - no headers, brackets, or multple responses. You will respond as if you were Ethan. Here is a conversation:",
+    }, // Formulate prompt
+    // ...conversation will be added next
   ];
 
   // Format and log the conversation history
   console.log(`\nConversation history with ${chatIdentifier}:`);
   console.log("------------------------------------");
+  const conversation = [];
   for (const rowConv of rowsConv) {
     let sender = rowConv.is_from_me ? "Ethan" : rowConv.id;
-    console.log(`[${sender}]: ${rowConv.text}`);
-    conversation.push({
-      role: sender,
-      content: rowConv.text,
-    });
+    const line = `[${sender}]: ${rowConv.text}`;
+    console.log(line);
+    conversation.push(line);
   }
+  messages.push({
+    role: "user",
+    content: conversation.join("\n"),
+  });
   console.log("------------------------------------");
 
-  return conversation;
+  return messages;
 }
 
 // Wrapper function to turn db call async
@@ -227,17 +238,25 @@ function getConversationData(sqlConversation, chatIdentifier, db) {
 }
 
 function createChatGPTThrottle() {
-  let lastCalled = null;
+  const maxCallsPerHour = 10;
+  let lastReset = new Date();
+  let callCount = 0;
 
   return async function throttledChatGPT(conversation) {
     const now = new Date();
-    if (lastCalled !== null && now - lastCalled < 3600 * 1000) {
-      // If it's been less than an hour since the last API call, return a placeholder.
-      const timeLeft = Math.ceil((3600 * 1000 - (now - lastCalled)) / 60000); // time in minutes
+    if (now - lastReset >= 3600 * 1000) {
+      // Reset if it's been an hour or more since the last reset.
+      lastReset = now;
+      callCount = 0;
+    }
+
+    if (callCount >= maxCallsPerHour) {
+      // If we've reached the maximum number of calls for this hour, return a placeholder.
+      const timeLeft = Math.ceil((3600 * 1000 - (now - lastReset)) / 60000); // time in minutes
       return `ChatGPT limit reached. Next available in ${timeLeft} minutes.`;
     }
 
-    lastCalled = now;
+    callCount += 1;
     return await chatGPTResponse(conversation);
   };
 }
