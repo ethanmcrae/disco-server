@@ -15,6 +15,9 @@ const apnProvider = new apn.Provider({
 });
 
 function sendNotification(service, message, recipient) {
+  // Message adjustments
+  message = message.replace(/\?+/g, "?"); // Prevent chained '?' because of '？' conversion
+
   // Create notification
   let note = new apn.Notification();
   note.expiry = Math.floor(Date.now() / 1000) + 3600; // Expires 1 hour from now
@@ -33,7 +36,7 @@ function sendNotification(service, message, recipient) {
     // console.log(result); //// To see all data
 
     for (const success of sent) {
-      console.log("🚀 Sent a message to", success.device);
+      console.log("🚀 Sent a message:", message);
     }
     for (const fail of failed) {
       console.log("💥 Failed to send message to", fail.device);

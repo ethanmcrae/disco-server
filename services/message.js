@@ -101,11 +101,10 @@ async function checkForNewMessages(rows, db) {
   // Iterate through each conversation id and find more about it
   const formattedConversations = [];
   for (const chatIdentifier of newConversations) {
-    // TODO: Remove after successful tests.
     // This is a new message. Log it with a system timestamp.
-    console.log(`
-=================================================================================
-Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`);
+    console.log(
+      `Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`
+    );
 
     // Get conversational context for AI Generated response
     const rowsConv = await getConversationData(
@@ -117,10 +116,6 @@ Processed new message from ${chatIdentifier} at ${new Date().toLocaleString()}:`
     // Exit early if I already responded to this chat
     const latestMessageInConversation = rowsConv[rowsConv.length - 1];
     if (latestMessageInConversation.is_from_me) {
-      // TODO: Remove LOG after successful tests BUT keep the continue.
-      console.log(
-        `Skipping response generation for ${chatIdentifier} because it appears that I already responded with: ${latestMessageInConversation.text}\n`
-      );
       continue;
     }
 
@@ -150,8 +145,6 @@ async function chatGPTResponse(conversation) {
     }
   );
 
-  console.log("Generated response:"); // TODO: Remove
-  console.log(response.data.choices[0].message.content);
   return response.data.choices[0].message.content;
 }
 
@@ -190,7 +183,7 @@ function getConversationKeys(rows) {
   return uniqueNewConversations;
 }
 
-function conversationFormatter(rowsConv, chatIdentifier) {
+function conversationFormatter(rowsConv, chatIdentifier, verbose = false) {
   const messages = [
     {
       role: "system",
@@ -206,20 +199,20 @@ function conversationFormatter(rowsConv, chatIdentifier) {
   ];
 
   // Format and log the conversation history
-  console.log(`\nConversation history with ${chatIdentifier}:`);
-  console.log("------------------------------------");
+  if (verbose) console.log(`\nConversation history with ${chatIdentifier}:`);
+  if (verbose) console.log("------------------------------------");
   const conversation = [];
   for (const rowConv of rowsConv) {
     let sender = rowConv.is_from_me ? "Ethan" : rowConv.id;
     const line = `[${sender}]: ${rowConv.text}`;
-    console.log(line);
+    if (verbose) console.log(line);
     conversation.push(line);
   }
   messages.push({
     role: "user",
     content: conversation.join("\n"),
   });
-  console.log("------------------------------------");
+  if (verbose) console.log("------------------------------------");
 
   return messages;
 }

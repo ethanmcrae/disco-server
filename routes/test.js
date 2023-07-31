@@ -1,9 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const notificationSystem = require("../services/notification");
+const notificationHandler = require("../services/notification");
 
 router.get("/imessage", (req, res) => {
-  const dummyMessage = "This is a test message";
+  const dummyMessage = "Test complete. Errors? 0 & Warnings: 0. Success! 🎉";
   const dummyRecipient = {
     id: process.env.TEST_NUMBER,
     displayName: "Dad",
