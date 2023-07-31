@@ -171,15 +171,6 @@ function getConversationKeys(rows) {
       // Add it to the previous results
       if (!previousResults.includes(chatIdentifier)) {
         previousResults.push(chatIdentifier);
-
-        // If we have more than 25 messages in memory, remove the oldest one
-        while (previousResults.length > 25) {
-          // Get the identifier of the oldest conversation
-          let oldestConversation = previousResults.shift();
-
-          // Delete the oldest conversation from the conversationDates as well
-          delete conversationDates[oldestConversation];
-        }
       }
 
       // Add it to memory
