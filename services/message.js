@@ -26,6 +26,7 @@ const sqlNewMessages = `
     FROM message
     JOIN chat_message_join on chat_message_join.message_id = message.ROWID
     WHERE chat_message_join.chat_id = c.ROWID
+    AND message.date > (?)
   )
   AND m.text IS NOT NULL 
   AND m.is_from_me = 0
@@ -42,6 +43,7 @@ const sqlConversation = `
   ORDER BY m.date DESC
   LIMIT 25
 `;
+const eightHoursAgo = Date.now() / 1000 - 8 * 60 * 60 + 978307200; // The term 978307200 is the number of seconds between 1970-01-01 (UNIX epoch) and 2001-01-01 (iMessage database epoch).
 
 // Create a throttled version of the ChatGPT API function.
 const throttledChatGPT = createChatGPTThrottle();
@@ -66,7 +68,11 @@ function copyAndProcessDB() {
         }
       );
 
-      const rows = await getConversationData(sqlNewMessages, [], db);
+      const rows = await getConversationData(
+        sqlNewMessages,
+        [eightHoursAgo],
+        db
+      );
 
       // These are formatted conversations that need responses
       const conversations = await checkForNewMessages(rows, db);
@@ -218,9 +224,9 @@ function conversationFormatter(rowsConv, chatIdentifier, verbose = false) {
 }
 
 // Wrapper function to turn db call async
-function getConversationData(sqlConversation, chatIdentifier, db) {
+function getConversationData(sqlConversation, params, db) {
   return new Promise((resolve, reject) => {
-    db.all(sqlConversation, chatIdentifier, (err, rows) => {
+    db.all(sqlConversation, params, (err, rows) => {
       if (err) {
         reject(err);
       } else {
